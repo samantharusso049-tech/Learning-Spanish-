@@ -1,0 +1,552 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Hablas · A1 Spanish</title>
+<style>html,body{margin:0;padding:0;background:#F6F5FA;-webkit-text-size-adjust:100%}*{box-sizing:border-box}</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useMemo, useEffect, useRef } = React;
+
+/* ══════════════════════════════════════════════════════════════
+   HABLAS · A1 · Latin American Spanish
+   ── ACCOUNTS (optional) ──────────────────────────────────────
+   To turn on login + cross-device sync, create a free Supabase
+   project and paste your two values below. Until then the app
+   runs local-only (progress saved on this device). Setup steps
+   are in the chat message that came with this file.
+   ────────────────────────────────────────────────────────────── */
+const SUPABASE_URL = "YOUR_SUPABASE_URL";        // <-- paste (looks like https://abcd.supabase.co)
+const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY"; // <-- paste the "anon public" key
+
+const CLOUD = SUPABASE_URL.indexOf("http") === 0 && SUPABASE_ANON_KEY.length > 20 && !!window.supabase;
+const sb = CLOUD ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+
+const T = {
+  surface:"#F6F5FA", card:"#FFFFFF", ink:"#211B33", inkSoft:"#5B5470",
+  line:"#E3E0EC", jade:"#0F8A72", jadeSoft:"#E3F1EC", amber:"#E0921F",
+  violet:"#5A4B93", violetSoft:"#ECE8F6", rose:"#C1516A",
+  serif:"Georgia, 'Times New Roman', serif", sans:"system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
+};
+const DAY = 86400000;
+
+/* ── local persistence (offline cache + local-only mode) ── */
+let MEM = null; const KEY = "hablas:a1:v2";
+function loadLocal(){ try{ const r=localStorage.getItem(KEY); if(r) return JSON.parse(r); }catch(e){} return MEM; }
+function saveLocal(o){ MEM=o; try{ localStorage.setItem(KEY, JSON.stringify(o)); }catch(e){} }
+const emptyStore = () => ({ cards:{}, vocab:{}, streak:{count:0,last:null} });
+
+/* ── cloud sync (Supabase) ── */
+async function cloudLoad(uid){ if(!CLOUD) return null; try{ const r = await sb.from("progress").select("data").eq("user_id", uid).maybeSingle(); return r.data ? r.data.data : null; }catch(e){ return null; } }
+async function cloudSave(uid, data){ if(!CLOUD) return; try{ await sb.from("progress").upsert({ user_id: uid, data: data, updated_at: new Date().toISOString() }); }catch(e){} }
+
+const A1_GRAMMAR = [
+  ["g_articles","Nouns, gender & articles"],["g_pron","Subject pronouns (tú/usted/ustedes)"],
+  ["g_ar","Present tense · -ar verbs"],["g_er","Present tense · -er verbs"],["g_ir","Present tense · -ir verbs"],
+  ["g_stem","Stem-changing verbs"],["g_irreg","Irregular verbs (ser/ir/hacer…)"],["g_serestar","ser vs estar"],
+  ["g_hay","hay (there is / are)"],["g_tener","tener idioms (age, hunger)"],["g_gustar","gustar (likes)"],
+  ["g_adj","Adjective agreement"],["g_poss","Possessives"],["g_dem","Demonstratives"],
+  ["g_ques","Questions & question words"],["g_neg","Negation (no/nunca/nadie)"],["g_fut","Near future (ir a + inf.)"],
+  ["g_prog","Present progressive (estar + -ndo)"],["g_prep","Prepositions (a/de/en/con)"],["g_num","Numbers, time & dates"],
+  ["g_refl","Reflexive verbs (routine)"],["g_obj","Object pronouns (basic)"],["g_comp","Comparatives (más… que)"],
+  ["g_conn","Connectors (y/pero/porque)"],
+];
+const A1_NOTIONS = [
+  ["n_people","People & identity",{cat:"People & family"}],["n_num","Numbers 0–100",{word:"noventa"}],
+  ["n_color","Colors",{word:"rojo"}],["n_time","Days, months & time",{word:"enero"}],
+  ["n_house","Home & places",{cat:"Places"}],["n_food","Food & drink",{cat:"Food & drink"}],
+  ["n_body","Body & health",{cat:"Body & health"}],["n_work","Work, study & professions",{word:"profesor"}],
+  ["n_shop","Shopping & money",{word:"dinero"}],["n_transport","Transport & travel",{cat:"Transport"}],
+  ["n_weather","Weather & nature",{word:"hace calor"}],["n_obj","Clothing & objects",{cat:"Objects & ideas"}],
+  ["n_nat","Nationalities & origin",{word:"mexicano"}],["n_desc","Describing (adjectives)",{cat:"Adjectives"}],
+  ["n_social","Greetings & social",{cat:"Discourse & social"}],
+];
+
+const CONJ = {
+  hablar:{eng:"to speak",pat:"regular -ar",forms:[["yo","hablo"],["tú","hablas"],["él/ella","habla"],["nosotros","hablamos"],["ellos/ellas","hablan"]]},
+  trabajar:{eng:"to work",pat:"regular -ar",forms:[["yo","trabajo"],["tú","trabajas"],["él/ella","trabaja"],["nosotros","trabajamos"],["ellos/ellas","trabajan"]]},
+  estudiar:{eng:"to study",pat:"regular -ar",forms:[["yo","estudio"],["tú","estudias"],["él/ella","estudia"],["nosotros","estudiamos"],["ellos/ellas","estudian"]]},
+  necesitar:{eng:"to need",pat:"regular -ar",forms:[["yo","necesito"],["tú","necesitas"],["él/ella","necesita"],["nosotros","necesitamos"],["ellos/ellas","necesitan"]]},
+  llegar:{eng:"to arrive / get to",pat:"regular -ar",forms:[["yo","llego"],["tú","llegas"],["él/ella","llega"],["nosotros","llegamos"],["ellos/ellas","llegan"]]},
+  buscar:{eng:"to look for",pat:"regular -ar",forms:[["yo","busco"],["tú","buscas"],["él/ella","busca"],["nosotros","buscamos"],["ellos/ellas","buscan"]]},
+  aceptar:{eng:"to accept",pat:"regular -ar",forms:[["yo","acepto"],["tú","aceptas"],["él/ella","acepta"],["nosotros","aceptamos"],["ellos/ellas","aceptan"]]},
+  viajar:{eng:"to travel",pat:"regular -ar",forms:[["yo","viajo"],["tú","viajas"],["él/ella","viaja"],["nosotros","viajamos"],["ellos/ellas","viajan"]]},
+  ayudar:{eng:"to help",pat:"regular -ar",forms:[["yo","ayudo"],["tú","ayudas"],["él/ella","ayuda"],["nosotros","ayudamos"],["ellos/ellas","ayudan"]]},
+  llamar:{eng:"to call",pat:"regular -ar",forms:[["yo","llamo"],["tú","llamas"],["él/ella","llama"],["nosotros","llamamos"],["ellos/ellas","llaman"]]},
+  comer:{eng:"to eat",pat:"regular -er",forms:[["yo","como"],["tú","comes"],["él/ella","come"],["nosotros","comemos"],["ellos/ellas","comen"]]},
+  beber:{eng:"to drink",pat:"regular -er",forms:[["yo","bebo"],["tú","bebes"],["él/ella","bebe"],["nosotros","bebemos"],["ellos/ellas","beben"]]},
+  leer:{eng:"to read",pat:"regular -er",forms:[["yo","leo"],["tú","lees"],["él/ella","lee"],["nosotros","leemos"],["ellos/ellas","leen"]]},
+  vivir:{eng:"to live",pat:"regular -ir",forms:[["yo","vivo"],["tú","vives"],["él/ella","vive"],["nosotros","vivimos"],["ellos/ellas","viven"]]},
+  escribir:{eng:"to write",pat:"regular -ir",forms:[["yo","escribo"],["tú","escribes"],["él/ella","escribe"],["nosotros","escribimos"],["ellos/ellas","escriben"]]},
+  abrir:{eng:"to open",pat:"regular -ir",forms:[["yo","abro"],["tú","abres"],["él/ella","abre"],["nosotros","abrimos"],["ellos/ellas","abren"]]},
+  llamarse:{eng:"to be called",pat:"reflexive -ar",forms:[["yo","me llamo"],["tú","te llamas"],["él/ella","se llama"],["nosotros","nos llamamos"],["ellos/ellas","se llaman"]]},
+  levantarse:{eng:"to get up",pat:"reflexive -ar",forms:[["yo","me levanto"],["tú","te levantas"],["él/ella","se levanta"],["nosotros","nos levantamos"],["ellos/ellas","se levantan"]]},
+  acostarse:{eng:"to go to bed",pat:"reflexive · stem o→ue",forms:[["yo","me acuesto"],["tú","te acuestas"],["él/ella","se acuesta"],["nosotros","nos acostamos"],["ellos/ellas","se acuestan"]]},
+  ser:{eng:"to be (essence)",pat:"irregular",forms:[["yo","soy"],["tú","eres"],["él/ella","es"],["nosotros","somos"],["ellos/ellas","son"]]},
+  estar:{eng:"to be (state/place)",pat:"irregular",forms:[["yo","estoy"],["tú","estás"],["él/ella","está"],["nosotros","estamos"],["ellos/ellas","están"]]},
+  tener:{eng:"to have",pat:"irregular (e→ie + -go)",forms:[["yo","tengo"],["tú","tienes"],["él/ella","tiene"],["nosotros","tenemos"],["ellos/ellas","tienen"]]},
+  ir:{eng:"to go",pat:"irregular",forms:[["yo","voy"],["tú","vas"],["él/ella","va"],["nosotros","vamos"],["ellos/ellas","van"]]},
+  hacer:{eng:"to do / make",pat:"irregular (-go)",forms:[["yo","hago"],["tú","haces"],["él/ella","hace"],["nosotros","hacemos"],["ellos/ellas","hacen"]]},
+  ver:{eng:"to see / watch",pat:"irregular",forms:[["yo","veo"],["tú","ves"],["él/ella","ve"],["nosotros","vemos"],["ellos/ellas","ven"]]},
+  poder:{eng:"can / to be able",pat:"stem o→ue",forms:[["yo","puedo"],["tú","puedes"],["él/ella","puede"],["nosotros","podemos"],["ellos/ellas","pueden"]]},
+  querer:{eng:"to want",pat:"stem e→ie",forms:[["yo","quiero"],["tú","quieres"],["él/ella","quiere"],["nosotros","queremos"],["ellos/ellas","quieren"]]},
+  saber:{eng:"to know (facts)",pat:"irregular yo-form",forms:[["yo","sé"],["tú","sabes"],["él/ella","sabe"],["nosotros","sabemos"],["ellos/ellas","saben"]]},
+  conocer:{eng:"to know (people/places)",pat:"irregular yo (-zco)",forms:[["yo","conozco"],["tú","conoces"],["él/ella","conoce"],["nosotros","conocemos"],["ellos/ellas","conocen"]]},
+  venir:{eng:"to come",pat:"irregular (e→ie + -go)",forms:[["yo","vengo"],["tú","vienes"],["él/ella","viene"],["nosotros","venimos"],["ellos/ellas","vienen"]]},
+  pensar:{eng:"to think",pat:"stem e→ie",forms:[["yo","pienso"],["tú","piensas"],["él/ella","piensa"],["nosotros","pensamos"],["ellos/ellas","piensan"]]},
+  empezar:{eng:"to start",pat:"stem e→ie",forms:[["yo","empiezo"],["tú","empiezas"],["él/ella","empieza"],["nosotros","empezamos"],["ellos/ellas","empiezan"]]},
+  entender:{eng:"to understand",pat:"stem e→ie",forms:[["yo","entiendo"],["tú","entiendes"],["él/ella","entiende"],["nosotros","entendemos"],["ellos/ellas","entienden"]]},
+  dormir:{eng:"to sleep",pat:"stem o→ue",forms:[["yo","duermo"],["tú","duermes"],["él/ella","duerme"],["nosotros","dormimos"],["ellos/ellas","duermen"]]},
+  pedir:{eng:"to ask for / order",pat:"stem e→i",forms:[["yo","pido"],["tú","pides"],["él/ella","pide"],["nosotros","pedimos"],["ellos/ellas","piden"]]},
+  repetir:{eng:"to repeat",pat:"stem e→i",forms:[["yo","repito"],["tú","repites"],["él/ella","repite"],["nosotros","repetimos"],["ellos/ellas","repiten"]]},
+  costar:{eng:"to cost",pat:"stem o→ue · impersonal",forms:[["(it)","cuesta"],["(they)","cuestan"]]},
+  gustar:{eng:"to like (lit. to please)",pat:"special · me/te/le + gusta(n)",forms:[["me","gusta / gustan"],["te","gusta / gustan"],["le","gusta / gustan"],["nos","gusta / gustan"],["les","gusta / gustan"]]},
+};
+const wd = (t,g,l,p)=>({t,g,l:l||t.toLowerCase(),p:p||"word"});
+const vb = (t,g,key,person,tense)=>({t,g,l:key,p:"verb",verb:{key,person,tense:tense||"present",mood:"indicative"}});
+const UNITS = [
+  {n:1,name:"Greetings & survival",hint:"fixed phrases for every day"},
+  {n:2,name:"Present tense — regular verbs",hint:"-ar, -er, -ir"},
+  {n:3,name:"ser · estar · tener · hay",hint:"the four description pillars"},
+  {n:4,name:"Stem-changing & irregular verbs",hint:"querer, poder, ir, hacer…"},
+  {n:5,name:"Near future, questions & negation",hint:"voy a…, ¿qué?, no / nunca"},
+  {n:6,name:"Survival functions",hint:"order, shop, ask, get around"},
+  {n:7,name:"Rounding out A1",hint:"gustar, possessives, progressive, routine, comparatives"},
+];
+const SENTENCES = [
+  {u:1,tag:"greeting",g:["g_serestar","g_ques","g_irreg"],en:"Hello, how are you?",words:[wd("Hola,","hello","hola"),wd("¿cómo","how","cómo"),vb("estás?","are (you)","estar","tú")]},
+  {u:1,tag:"greeting",g:["g_adj"],en:"Good morning, nice to meet you.",words:[wd("Buenos","good","bueno"),wd("días,","days → 'buenos días' = good morning","día"),wd("mucho","much","mucho"),wd("gusto.","pleasure → 'mucho gusto' = nice to meet you","gusto")]},
+  {u:1,tag:"reflexive · llamarse",g:["g_refl","g_ques"],en:"What's your name? — My name is Ana.",words:[wd("¿Cómo","how","cómo"),vb("te llamas?","are (you) called","llamarse","tú"),vb("—Me llamo","I'm called","llamarse","yo"),wd("Ana.","Ana","ana")]},
+  {u:1,tag:"courtesy",g:["g_conn"],en:"Thank you very much. — You're welcome.",words:[wd("Muchas","many","mucho"),wd("gracias.","thanks","gracias"),wd("—De","of","de"),wd("nada.","nothing → 'de nada' = you're welcome","nada")]},
+  {u:1,tag:"farewell",g:["g_prep"],en:"See you tomorrow.",words:[wd("Hasta","until","hasta"),wd("mañana.","tomorrow / morning","mañana")]},
+  {u:1,tag:"clarifying",g:["g_neg","g_stem"],en:"Sorry, I don't understand.",words:[wd("Perdón,","sorry","perdón"),wd("no","not","no"),vb("entiendo.","I understand","entender","yo")]},
+  {u:1,tag:"requesting",g:["g_stem","g_ques"],en:"Please, can you repeat?",words:[wd("Por","for","por"),wd("favor,","favor → 'por favor' = please","favor"),vb("¿puedes","can (you)","poder","tú"),vb("repetir?","to repeat","repetir","—","infinitive")]},
+  {u:1,tag:"origin · ser",g:["g_serestar","g_pron","g_ques","g_prep"],en:"Where are you from? — I'm from Mexico.",words:[wd("¿De","from","de"),wd("dónde","where","dónde"),vb("eres?","are (you)","ser","tú"),vb("—Soy","I am","ser","yo"),wd("de","from","de"),wd("México.","Mexico","méxico")]},
+  {u:2,tag:"present -ar",g:["g_ar"],en:"I speak a little Spanish.",words:[vb("Hablo","I speak","hablar","yo"),wd("un","a","uno"),wd("poco","little","poco"),wd("de","of","de"),wd("español.","Spanish","español")]},
+  {u:2,tag:"present -ar · question",g:["g_ar","g_ques"],en:"Do you work here?",words:[vb("¿Trabajas","do (you) work","trabajar","tú"),wd("aquí?","here","aquí")]},
+  {u:2,tag:"present -er · nosotros",g:["g_er"],en:"We eat at home.",words:[vb("Comemos","we eat","comer","nosotros"),wd("en","at / in","en"),wd("casa.","home / house","casa")]},
+  {u:2,tag:"present -ir",g:["g_ir","g_prep"],en:"I live in the city.",words:[vb("Vivo","I live","vivir","yo"),wd("en","in","en"),wd("la","the","la"),wd("ciudad.","city","ciudad")]},
+  {u:2,tag:"present -ar · 3rd person",g:["g_ar"],en:"She studies medicine.",words:[wd("Ella","she","ella"),vb("estudia","studies","estudiar","él/ella"),wd("medicina.","medicine","medicina")]},
+  {u:2,tag:"present -er · 3rd plural",g:["g_er"],en:"They drink coffee every day.",words:[wd("Ellos","they","ellos"),vb("beben","drink","beber","ellos/ellas"),wd("café","coffee","café"),wd("todos","every","todo"),wd("los","the","los"),wd("días.","days","día")]},
+  {u:2,tag:"present -ir",g:["g_ir"],en:"I'm writing a message.",words:[vb("Escribo","I write","escribir","yo"),wd("un","a","uno"),wd("mensaje.","message","mensaje")]},
+  {u:2,tag:"present -er · nosotros",g:["g_er"],en:"We read the newspaper.",words:[vb("Leemos","we read","leer","nosotros"),wd("el","the","el"),wd("periódico.","newspaper","periódico")]},
+  {u:2,tag:"present -ar",g:["g_ar"],en:"I need help.",words:[vb("Necesito","I need","necesitar","yo"),wd("ayuda.","help","ayuda")]},
+  {u:3,tag:"ser · identity",g:["g_serestar"],en:"I'm a student.",words:[vb("Soy","I am","ser","yo"),wd("estudiante.","student","estudiante")]},
+  {u:3,tag:"ser · description",g:["g_serestar","g_adj"],en:"She's very nice.",words:[wd("Ella","she","ella"),vb("es","is","ser","él/ella"),wd("muy","very","muy"),wd("simpática.","nice / friendly (f.)","simpático")]},
+  {u:3,tag:"estar · state",g:["g_serestar","g_adj"],en:"I'm tired.",words:[vb("Estoy","I am","estar","yo"),wd("cansado.","tired (m.)","cansado")]},
+  {u:3,tag:"estar · location",g:["g_serestar","g_ques"],en:"Where's the bathroom?",words:[wd("¿Dónde","where","dónde"),vb("está","is","estar","él/ella"),wd("el","the","el"),wd("baño?","bathroom","baño")]},
+  {u:3,tag:"tener · possession",g:["g_irreg","g_num"],en:"I have two brothers.",words:[vb("Tengo","I have","tener","yo"),wd("dos","two","dos"),wd("hermanos.","brothers / siblings","hermano")]},
+  {u:3,tag:"tener · age",g:["g_tener","g_ques","g_num"],en:"How old are you? — I'm thirty.",words:[wd("¿Cuántos","how many","cuánto"),wd("años","years","año"),vb("tienes?","do (you) have","tener","tú"),vb("—Tengo","I have","tener","yo"),wd("treinta.","thirty","treinta")]},
+  {u:3,tag:"hay · existence",g:["g_hay","g_prep"],en:"There's a restaurant near here.",words:[wd("Hay","there is / there are","haber"),wd("un","a","uno"),wd("restaurante","restaurant","restaurante"),wd("cerca","near","cerca"),wd("de","of","de"),wd("aquí.","here","aquí")]},
+  {u:3,tag:"hay · question",g:["g_hay","g_ques"],en:"Are there any rooms?",words:[wd("¿Hay","is there / are there","haber"),wd("habitaciones?","rooms","habitación")]},
+  {u:3,tag:"tener · idiom",g:["g_tener"],en:"I'm hungry.",words:[vb("Tengo","I have","tener","yo"),wd("hambre.","hunger → 'tener hambre' = to be hungry","hambre")]},
+  {u:4,tag:"querer · e→ie",g:["g_stem"],en:"I want to watch TV.",words:[vb("Quiero","I want","querer","yo"),vb("ver","to watch","ver","—","infinitive"),wd("la","the","la"),wd("tele.","TV (short for televisión)","tele")]},
+  {u:4,tag:"poder · o→ue",g:["g_stem","g_obj"],en:"Can you help me?",words:[vb("¿Puedes","can (you)","poder","tú"),vb("ayudarme?","to help me","ayudar","—","infinitive")]},
+  {u:4,tag:"hacer · irregular",g:["g_irreg","g_ques"],en:"What are you doing?",words:[wd("¿Qué","what","qué"),vb("haces?","do (you) / are doing","hacer","tú")]},
+  {u:4,tag:"ir · irregular",g:["g_irreg","g_prep"],en:"I'm going to the market.",words:[vb("Voy","I'm going","ir","yo"),wd("al","to the","al"),wd("mercado.","market","mercado")]},
+  {u:4,tag:"saber · irregular",g:["g_irreg","g_neg"],en:"I don't know.",words:[wd("No","not","no"),vb("sé.","I know","saber","yo")]},
+  {u:4,tag:"venir · irregular",g:["g_irreg"],en:"She's coming tomorrow.",words:[wd("Ella","she","ella"),vb("viene","comes / is coming","venir","él/ella"),wd("mañana.","tomorrow","mañana")]},
+  {u:4,tag:"pensar · e→ie",g:["g_stem","g_conn"],en:"I think it's a good idea.",words:[vb("Pienso","I think","pensar","yo"),wd("que","that","que"),vb("es","is","ser","él/ella"),wd("buena","good (f.)","bueno"),wd("idea.","idea","idea")]},
+  {u:4,tag:"empezar · e→ie",g:["g_stem","g_num"],en:"The movie starts at eight.",words:[wd("La","the","la"),wd("película","movie / film","película"),vb("empieza","starts","empezar","él/ella"),wd("a","at","a"),wd("las","the","las"),wd("ocho.","eight","ocho")]},
+  {u:4,tag:"dormir · o→ue",g:["g_stem","g_num"],en:"I sleep eight hours.",words:[vb("Duermo","I sleep","dormir","yo"),wd("ocho","eight","ocho"),wd("horas.","hours","hora")]},
+  {u:4,tag:"pedir · e→i",g:["g_stem"],en:"I'll order the check.",words:[vb("Pido","I order / ask for","pedir","yo"),wd("la","the","la"),wd("cuenta.","check / bill","cuenta")]},
+  {u:4,tag:"entender · e→ie",g:["g_stem","g_neg"],en:"I don't understand the question.",words:[wd("No","not","no"),vb("entiendo","I understand","entender","yo"),wd("la","the","la"),wd("pregunta.","question","pregunta")]},
+  {u:5,tag:"near future",g:["g_fut"],en:"I'm going to travel to Peru.",words:[vb("Voy","I'm going","ir","yo"),wd("a","to","a"),vb("viajar","to travel","viajar","—","infinitive"),wd("a","to","a"),wd("Perú.","Peru","perú")]},
+  {u:5,tag:"near future · nosotros",g:["g_fut"],en:"We're going to eat later.",words:[vb("Vamos","we're going","ir","nosotros"),wd("a","to","a"),vb("comer","to eat","comer","—","infinitive"),wd("más","more","más"),wd("tarde.","late → 'más tarde' = later","tarde")]},
+  {u:5,tag:"near future · question",g:["g_fut","g_ques"],en:"What are you going to do tomorrow?",words:[wd("¿Qué","what","qué"),vb("vas","are (you) going","ir","tú"),wd("a","to","a"),vb("hacer","to do","hacer","—","infinitive"),wd("mañana?","tomorrow","mañana")]},
+  {u:5,tag:"negation · nunca",g:["g_neg","g_er"],en:"I never drink alcohol.",words:[wd("Nunca","never","nunca"),vb("bebo","I drink","beber","yo"),wd("alcohol.","alcohol","alcohol")]},
+  {u:5,tag:"negation · nadie",g:["g_neg","g_hay"],en:"Nobody's home.",words:[wd("No","not","no"),wd("hay","there is","haber"),wd("nadie","nobody","nadie"),wd("en","at","en"),wd("casa.","home","casa")]},
+  {u:5,tag:"porque / por qué",g:["g_ques","g_serestar","g_conn"],en:"Why are you sad? — Because I'm tired.",words:[wd("¿Por qué","why","porque"),vb("estás","are (you)","estar","tú"),wd("triste?","sad","triste"),wd("—Porque","because","porque"),vb("estoy","I am","estar","yo"),wd("cansado.","tired","cansado")]},
+  {u:5,tag:"question · quién",g:["g_ques","g_irreg"],en:"Who is it? — I don't know.",words:[wd("¿Quién","who","quién"),vb("es?","is (it)","ser","él/ella"),wd("—No","not","no"),vb("sé.","I know","saber","yo")]},
+  {u:5,tag:"question · cuándo",g:["g_ques","g_ir"],en:"When does the store open?",words:[wd("¿Cuándo","when","cuándo"),vb("abre","opens","abrir","él/ella"),wd("la","the","la"),wd("tienda?","store / shop","tienda")]},
+  {u:6,tag:"ordering",g:["g_stem","g_articles"],en:"I'll have a coffee, please.",words:[vb("Quiero","I want / I'll have","querer","yo"),wd("un","a","uno"),wd("café,","coffee","café"),wd("por","for","por"),wd("favor.","favor → 'por favor' = please","favor")]},
+  {u:6,tag:"asking price",g:["g_stem","g_ques"],en:"How much does it cost?",words:[wd("¿Cuánto","how much","cuánto"),vb("cuesta?","does (it) cost","costar","(it)")]},
+  {u:6,tag:"requesting",g:["g_articles"],en:"The check, please.",words:[wd("La","the","la"),wd("cuenta,","check / bill","cuenta"),wd("por","for","por"),wd("favor.","favor → 'por favor' = please","favor")]},
+  {u:6,tag:"directions · location",g:["g_serestar","g_ques"],en:"Where's the metro station?",words:[wd("¿Dónde","where","dónde"),vb("está","is","estar","él/ella"),wd("la","the","la"),wd("estación","station","estación"),wd("del","of the","del"),wd("metro?","metro / subway","metro")]},
+  {u:6,tag:"directions · how to get",g:["g_ar","g_ques","g_prep"],en:"How do I get to downtown?",words:[wd("¿Cómo","how","cómo"),vb("llego","do I get / arrive","llegar","yo"),wd("al","to the","al"),wd("centro?","downtown / center","centro")]},
+  {u:6,tag:"transaction",g:["g_ar","g_pron","g_ques"],en:"Do you accept cards?",words:[vb("¿Aceptan","do (you all) accept","aceptar","ellos/ellas"),wd("tarjetas?","cards","tarjeta")]},
+  {u:6,tag:"asking · location",g:["g_ar","g_articles"],en:"I'm looking for the museum.",words:[vb("Busco","I'm looking for","buscar","yo"),wd("el","the","el"),wd("museo.","museum","museo")]},
+  {u:7,tag:"gustar",g:["g_gustar","g_articles"],en:"I like coffee.",words:[vb("Me gusta","I like","gustar","me"),wd("el","the","el"),wd("café.","coffee","café")]},
+  {u:7,tag:"gustar · question",g:["g_gustar","g_ques"],en:"Do you like to travel?",words:[vb("¿Te gusta","do you like","gustar","te"),vb("viajar?","to travel","viajar","—","infinitive")]},
+  {u:7,tag:"adjective agreement",g:["g_adj","g_conn","g_serestar"],en:"The house is big and pretty.",words:[wd("La","the","la"),wd("casa","house","casa"),vb("es","is","ser","él/ella"),wd("grande","big","grande"),wd("y","and","y"),wd("bonita.","pretty (f.)","bonito")]},
+  {u:7,tag:"possessive",g:["g_poss","g_serestar"],en:"My brother is a doctor.",words:[wd("Mi","my","mi"),wd("hermano","brother","hermano"),vb("es","is","ser","él/ella"),wd("médico.","doctor","médico")]},
+  {u:7,tag:"possessive · question",g:["g_poss","g_ques"],en:"Where's your phone?",words:[wd("¿Dónde","where","dónde"),vb("está","is","estar","él/ella"),wd("tu","your","tu"),wd("celular?","cell phone","celular")]},
+  {u:7,tag:"demonstrative",g:["g_dem","g_poss"],en:"This is my friend.",words:[wd("Este","this","este"),vb("es","is","ser","él/ella"),wd("mi","my","mi"),wd("amigo.","friend","amigo")]},
+  {u:7,tag:"demonstrative",g:["g_dem","g_adj"],en:"That restaurant is expensive.",words:[wd("Ese","that","ese"),wd("restaurante","restaurant","restaurante"),vb("es","is","ser","él/ella"),wd("caro.","expensive","caro")]},
+  {u:7,tag:"present progressive",g:["g_prog"],en:"I'm studying Spanish.",words:[vb("Estoy","I am","estar","yo"),wd("estudiando","studying (gerund of estudiar)","estudiar"),wd("español.","Spanish","español")]},
+  {u:7,tag:"present progressive",g:["g_prog","g_ques"],en:"What are you doing? — I'm eating.",words:[wd("¿Qué","what","qué"),vb("estás","are (you)","estar","tú"),wd("haciendo?","doing (gerund of hacer)","hacer"),vb("—Estoy","I am","estar","yo"),wd("comiendo.","eating (gerund of comer)","comer")]},
+  {u:7,tag:"preposition · con",g:["g_prep","g_poss"],en:"I live with my family.",words:[vb("Vivo","I live","vivir","yo"),wd("con","with","con"),wd("mi","my","mi"),wd("familia.","family","familia")]},
+  {u:7,tag:"time",g:["g_num"],en:"It's three o'clock.",words:[vb("Son","they are (it's)","ser","ellos/ellas"),wd("las","the","las"),wd("tres.","three","tres")]},
+  {u:7,tag:"numbers · money",g:["g_num","g_ques"],en:"How much is it? — Fifty pesos.",words:[wd("¿Cuánto","how much","cuánto"),vb("es?","is (it)","ser","él/ella"),wd("—Cincuenta","fifty","cincuenta"),wd("pesos.","pesos","peso")]},
+  {u:7,tag:"reflexive · routine",g:["g_refl"],en:"I get up early.",words:[vb("Me levanto","I get up","levantarse","yo"),wd("temprano.","early","temprano")]},
+  {u:7,tag:"reflexive · routine",g:["g_refl"],en:"I go to bed late.",words:[vb("Me acuesto","I go to bed","acostarse","yo"),wd("tarde.","late","tarde")]},
+  {u:7,tag:"object pronoun",g:["g_obj","g_neg","g_irreg"],en:"I don't know him.",words:[wd("No","not","no"),wd("lo","him / it","lo"),vb("conozco.","I know","conocer","yo")]},
+  {u:7,tag:"object pronoun",g:["g_obj","g_ar"],en:"She calls me every day.",words:[wd("Ella","she","ella"),wd("me","me","me"),vb("llama","calls","llamar","él/ella"),wd("todos","every","todo"),wd("los","the","los"),wd("días.","days","día")]},
+  {u:7,tag:"comparative",g:["g_comp","g_serestar"],en:"Coffee is better than tea.",words:[wd("El","the","el"),wd("café","coffee","café"),vb("es","is","ser","él/ella"),wd("mejor","better","mejor"),wd("que","than","que"),wd("el","the","el"),wd("té.","tea","té")]},
+  {u:7,tag:"comparative",g:["g_comp"],en:"This is more expensive.",words:[wd("Esto","this","esto"),vb("es","is","ser","él/ella"),wd("más","more","más"),wd("caro.","expensive","caro")]},
+].map((c,i)=>({...c,id:i}));
+
+const VOCAB_RAW = {
+  "Grammar & function":`yo — I|tú — you (informal)|usted — you (formal)|él — he|ella — she|nosotros — we|ustedes — you all (LA)|ellos — they (m.)|ellas — they (f.)|me — me|te — you|se — oneself|nos — us|lo — it/him|la — it/her|le — to him/her|los — them (m.)|las — them (f.)|les — to them|mí — me (after prep.)|ti — you (after prep.)|conmigo — with me|contigo — with you|mi — my|tu — your|su — his/her/your|nuestro — our|mío — mine|tuyo — yours|este — this|ese — that|aquel — that (yonder)|esto — this (neuter)|eso — that (neuter)|el — the (m.)|un — a (m.)|una — a (f.)|unos — some (m.)|unas — some (f.)|a — to/at|de — of/from|en — in/on/at|con — with|por — for/by|para — for/to|sin — without|sobre — on/about|entre — between|hasta — until|desde — since/from|hacia — toward|según — according to|durante — during|contra — against|y — and|o — or|pero — but|porque — because|que — that|si — if|aunque — although|como — as/like|cuando — when|mientras — while|pues — well/since|ni — nor|sino — but rather|qué — what|quién — who|cuál — which|cómo — how|cuándo — when|dónde — where|cuánto — how much|por qué — why|todo — all|alguno — some|ninguno — none|mucho — a lot|poco — little|más — more|menos — less|tanto — so much|cada — each|otro — other|mismo — same|cualquier — any|varios — several|demasiado — too much|bastante — quite/enough|algo — something|nada — nothing|alguien — someone|nadie — nobody|ambos — both|no — no/not|sí — yes|también — also|tampoco — neither|muy — very|ya — already|aún — still|todavía — still/yet|siempre — always|nunca — never|casi — almost|solo — only/alone|incluso — even|quizá — maybe|tal vez — perhaps`,
+  "Verbs":`ser — to be (essence)|estar — to be (state)|haber — there is / aux|tener — to have|hacer — to do/make|ir — to go|poder — can|decir — to say|ver — to see|dar — to give|saber — to know (facts)|querer — to want|llegar — to arrive|pasar — to pass/happen|deber — must/owe|poner — to put|parecer — to seem|quedar — to remain|creer — to believe|hablar — to speak|llevar — to carry/wear|dejar — to leave/let|seguir — to continue|encontrar — to find|llamar — to call|venir — to come|pensar — to think|salir — to go out|volver — to return|conocer — to know (people)|vivir — to live|sentir — to feel|mirar — to look|contar — to count/tell|empezar — to begin|esperar — to wait/hope|buscar — to look for|entrar — to enter|trabajar — to work|escribir — to write|perder — to lose|entender — to understand|pedir — to ask for|recordar — to remember|terminar — to finish|permitir — to allow|comer — to eat|beber — to drink|gustar — to like|necesitar — to need|usar — to use|comprar — to buy|pagar — to pay|ayudar — to help|jugar — to play|escuchar — to listen|leer — to read|aprender — to learn|enseñar — to teach|estudiar — to study|viajar — to travel|comenzar — to start|abrir — to open|cerrar — to close|cambiar — to change|ganar — to win/earn|tratar — to try/treat|presentar — to present|crear — to create|oír — to hear|acabar — to finish|tomar — to take/drink|sacar — to take out|conseguir — to get|servir — to serve|morir — to die|nacer — to be born|correr — to run|caminar — to walk|cocinar — to cook|dormir — to sleep|despertar — to wake|levantarse — to get up|acostarse — to go to bed|sentarse — to sit down|lavar — to wash|limpiar — to clean|descansar — to rest|recibir — to receive|mandar — to send|contestar — to answer|preguntar — to ask|explicar — to explain|repetir — to repeat|olvidar — to forget`,
+  "People & family":`hombre — man|mujer — woman|niño — boy/child|niña — girl|persona — person|gente — people|amigo — friend (m.)|amiga — friend (f.)|familia — family|padre — father|madre — mother|papá — dad|mamá — mom|hijo — son|hija — daughter|hermano — brother|hermana — sister|abuelo — grandfather|abuela — grandmother|esposo — husband|esposa — wife|novio — boyfriend|novia — girlfriend|bebé — baby|señor — sir/Mr.|señora — ma'am/Mrs.|chico — guy|chica — girl`,
+  "Nationalities & origin":`mexicano — Mexican|estadounidense — American (US)|español — Spanish|argentino — Argentine|colombiano — Colombian|chino — Chinese|francés — French|alemán — German|inglés — English|italiano — Italian|japonés — Japanese|extranjero — foreigner`,
+  "Work & professions":`dinero — money|precio — price|cuenta — bill/account|tarjeta — card|jefe — boss|reunión — meeting|proyecto — project|clase — class|examen — exam|tarea — homework|libro — book|palabra — word|pregunta — question|respuesta — answer|idioma — language|número — number|papel — paper|computadora — computer (LA)|teléfono — telephone|celular — cell phone (LA)|correo — mail/email|mensaje — message|internet — internet|profesor — teacher|maestro — teacher (LA)|estudiante — student|ingeniero — engineer|abogado — lawyer|enfermero — nurse|policía — police officer|mesero — waiter (LA)|cocinero — cook|vendedor — salesperson`,
+  "Time, days & months":`tiempo — time/weather|día — day|semana — week|mes — month|año — year|hora — hour|minuto — minute|momento — moment|mañana — morning/tomorrow|tarde — afternoon|noche — night|hoy — today|ayer — yesterday|fecha — date|rato — while|vez — time (occasion)|lunes — Monday|martes — Tuesday|miércoles — Wednesday|jueves — Thursday|viernes — Friday|sábado — Saturday|domingo — Sunday|enero — January|febrero — February|marzo — March|abril — April|mayo — May|junio — June|julio — July|agosto — August|septiembre — September|octubre — October|noviembre — November|diciembre — December`,
+  "Numbers":`cero — zero|uno — one|dos — two|tres — three|cuatro — four|cinco — five|seis — six|siete — seven|ocho — eight|nueve — nine|diez — ten|once — eleven|doce — twelve|trece — thirteen|catorce — fourteen|quince — fifteen|dieciséis — sixteen|diecisiete — seventeen|dieciocho — eighteen|diecinueve — nineteen|veinte — twenty|treinta — thirty|cuarenta — forty|cincuenta — fifty|sesenta — sixty|setenta — seventy|ochenta — eighty|noventa — ninety|cien — hundred|mil — thousand`,
+  "Colors":`rojo — red|azul — blue|verde — green|amarillo — yellow|naranja — orange|morado — purple|rosa — pink|marrón — brown|gris — grey|negro — black|blanco — white`,
+  "Places":`casa — house/home|ciudad — city|país — country|mundo — world|lugar — place|calle — street|escuela — school|universidad — university|trabajo — work|oficina — office|tienda — store|mercado — market|supermercado — supermarket|restaurante — restaurant|hotel — hotel|aeropuerto — airport|estación — station|banco — bank|hospital — hospital|farmacia — pharmacy|parque — park|playa — beach|iglesia — church|baño — bathroom|cocina — kitchen|cuarto — room|habitación — bedroom|puerta — door|ventana — window|mesa — table|silla — chair|cama — bed|centro — downtown|campo — countryside|pueblo — town`,
+  "Food & drink":`comida — food|agua — water|café — coffee|té — tea|leche — milk|jugo — juice (LA)|pan — bread|huevo — egg|carne — meat|pollo — chicken|pescado — fish|arroz — rice|frijoles — beans (LA)|verdura — vegetable|fruta — fruit|manzana — apple|queso — cheese|sal — salt|azúcar — sugar|sopa — soup|ensalada — salad|postre — dessert|cerveza — beer|vino — wine|desayuno — breakfast|almuerzo — lunch|cena — dinner`,
+  "Body & health":`cuerpo — body|cabeza — head|mano — hand|pie — foot|ojo — eye|boca — mouth|nariz — nose|brazo — arm|pierna — leg|corazón — heart|salud — health|dolor — pain|médico — doctor|medicina — medicine`,
+  "Transport":`carro — car (LA)|auto — car|camión — bus (LA)/truck|autobús — bus|tren — train|metro — subway|avión — airplane|bicicleta — bicycle|taxi — taxi|boleto — ticket (LA)|viaje — trip|camino — road/way|mapa — map`,
+  "Nature & weather":`sol — sun|luna — moon|lluvia — rain|viento — wind|nieve — snow|cielo — sky|mar — sea|río — river|montaña — mountain|árbol — tree|flor — flower|animal — animal|perro — dog|gato — cat|clima — climate|hace calor — it's hot|hace frío — it's cold|hace sol — it's sunny|hace viento — it's windy|llueve — it rains|nieva — it snows|está nublado — it's cloudy`,
+  "Objects & ideas":`cosa — thing|ropa — clothes|camisa — shirt|pantalón — pants|zapato — shoe|bolsa — bag|reloj — watch/clock|llave — key|foto — photo|música — music|película — movie|juego — game|regalo — gift|problema — problem|idea — idea|ejemplo — example|parte — part|forma — form/way|manera — manner|razón — reason|verdad — truth|historia — story|nombre — name|color — color|vida — life|amor — love|fin — end|principio — beginning|caso — case|tipo — type/guy|grupo — group`,
+  "Adjectives":`bueno — good|malo — bad|grande — big|pequeño — small|nuevo — new|viejo — old|joven — young|largo — long|corto — short|alto — tall/high|bajo — short/low|gordo — fat|delgado — thin|guapo — handsome|feo — ugly|bonito — pretty|lindo — cute (LA)|hermoso — beautiful|fácil — easy|difícil — difficult|importante — important|posible — possible|imposible — impossible|cierto — certain|verdadero — real|falso — false|propio — own|diferente — different|igual — equal/same|mejor — better|peor — worse|mayor — older|menor — younger|primero — first|último — last|próximo — next|siguiente — following|feliz — happy|contento — glad|triste — sad|cansado — tired|enfermo — sick|enojado — angry (LA)|preocupado — worried|tranquilo — calm|nervioso — nervous|ocupado — busy|libre — free|listo — ready/clever|seguro — sure/safe|caro — expensive|barato — cheap|rico — rich/delicious|pobre — poor|limpio — clean|sucio — dirty|frío — cold|caliente — hot|lleno — full|vacío — empty|fuerte — strong|débil — weak|rápido — fast|lento — slow|claro — clear|oscuro — dark|simpático — nice|amable — kind|inteligente — intelligent|tonto — silly|interesante — interesting|aburrido — boring|divertido — fun|famoso — famous|moderno — modern`,
+  "Adverbs & place":`aquí — here|ahí — there|allí — there (further)|allá — over there|cerca — near|lejos — far|arriba — up/above|abajo — down/below|adentro — inside|afuera — outside|delante — in front|detrás — behind|encima — on top|debajo — underneath|alrededor — around|bien — well|mal — badly|así — like this|despacio — slowly|juntos — together|ahora — now|luego — later|después — after|antes — before|temprano — early|pronto — soon|entonces — then/so|a veces — sometimes|de repente — suddenly|por fin — finally`,
+  "Discourse & social":`bueno — well…|o sea — I mean|es que — the thing is|además — besides|sin embargo — however|por eso — that's why|claro — of course|a ver — let's see|hola — hi|adiós — bye|gracias — thanks|por favor — please|perdón — sorry|disculpe — excuse me|salud — cheers/bless you|buenos días — good morning|buenas tardes — good afternoon|buenas noches — good night|mucho gusto — nice to meet you|de nada — you're welcome`,
+};
+const VOCAB = [];
+Object.keys(VOCAB_RAW).forEach((cat) => VOCAB_RAW[cat].split("|").forEach((p) => { const parts = p.split(" — "); if (parts[0]) VOCAB.push({ sp: parts[0].trim(), en: (parts[1]||"").trim(), cat }); }));
+const VOCAB_WORDS = new Set(VOCAB.map((v) => v.sp.toLowerCase()));
+const VOCAB_CATS = new Set(Object.keys(VOCAB_RAW));
+
+function grade(c, g, now) {
+  let ease = c.ease == null ? 2.5 : c.ease, interval = c.interval || 0, reps = c.reps || 0;
+  if (g === "again") { ease = Math.max(1.3, ease - 0.2); interval = 0; reps = 0; }
+  else if (g === "hard") { ease = Math.max(1.3, ease - 0.15); interval = interval < 1 ? 1 : Math.max(1, Math.round(interval * 1.2)); reps += 1; }
+  else if (g === "good") { interval = interval < 1 ? 1 : Math.round(interval * ease); reps += 1; }
+  else if (g === "easy") { ease += 0.15; interval = interval < 1 ? 2 : Math.round(interval * ease * 1.3); reps += 1; }
+  return { ease, interval, reps, due: g === "again" ? now : now + interval * DAY };
+}
+const dueLabel = (i) => (i < 1 ? "back today" : i === 1 ? "in 1 day" : "in " + i + " days");
+function speak(t){ try{ const s=window.speechSynthesis; if(!s)return; s.cancel(); const u=new SpeechSynthesisUtterance(t); u.lang="es-MX"; u.rate=0.92; const v=s.getVoices().find(x=>/es-MX|es_MX|es-US|es-419|Spanish/i.test(x.lang+x.name)); if(v)u.voice=v; s.speak(u);}catch(e){} }
+const today = () => Math.floor(Date.now() / DAY);
+const shuffle = (a) => { const b = a.slice(); for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = b[i]; b[i] = b[j]; b[j] = t; } return b; };
+
+function App() {
+  const [store, setStore] = useState(() => loadLocal() || emptyStore());
+  const [session, setSession] = useState(null);
+  const [gate, setGate] = useState(CLOUD ? "auth" : "app"); // auth | app  (auth only when cloud on)
+  const [syncMsg, setSyncMsg] = useState("");
+  const [view, setView] = useState("home");
+  const [mode, setMode] = useState("practice");
+  const [queue, setQueue] = useState([]); const [pos, setPos] = useState(0);
+  const [revealed, setRevealed] = useState(false); const [heard, setHeard] = useState(false);
+  const [selWord, setSelWord] = useState(null); const [sDone, setSDone] = useState(0);
+  const cloudT = useRef(null);
+
+  useEffect(() => { if (window.speechSynthesis) window.speechSynthesis.getVoices(); }, []);
+
+  // auth wiring
+  useEffect(() => {
+    if (!CLOUD) return;
+    sb.auth.getSession().then(({ data }) => { if (data && data.session) { setSession(data.session); setGate("app"); } });
+    const { data: sub } = sb.auth.onAuthStateChange((_e, s) => { setSession(s); if (s) setGate("app"); });
+    return () => { try { sub.subscription.unsubscribe(); } catch (e) {} };
+  }, []);
+
+  // on sign-in: pull cloud → use it if present, else push local up
+  useEffect(() => {
+    if (!CLOUD || !session) return;
+    let alive = true;
+    setSyncMsg("syncing…");
+    cloudLoad(session.user.id).then((data) => {
+      if (!alive) return;
+      if (data) { setStore(data); saveLocal(data); }
+      else { cloudSave(session.user.id, store); }
+      setSyncMsg("synced");
+      setTimeout(() => alive && setSyncMsg(""), 1500);
+    });
+    return () => { alive = false; };
+  }, [session]);
+
+  function persist(n){ setStore(n); saveLocal(n); if (CLOUD && session) { if (cloudT.current) clearTimeout(cloudT.current); cloudT.current = setTimeout(() => cloudSave(session.user.id, n), 600); } }
+  const cardState = (id) => (store.cards[id]) || { ease: 2.5, interval: 0, reps: 0, due: 0 };
+  function bumpStreak(s){ const t=today(); const st=s.streak||{count:0,last:null}; if(st.last===t)return st; return {count: st.last===t-1?st.count+1:1, last:t}; }
+
+  const covG = useMemo(() => { const hit = new Set(); SENTENCES.forEach((c) => (c.g||[]).forEach((g)=>hit.add(g))); return { covered: A1_GRAMMAR.filter(([id]) => hit.has(id)).length, total: A1_GRAMMAR.length }; }, []);
+  const covV = useMemo(() => { const ok = A1_NOTIONS.filter((n) => n[2].word ? VOCAB_WORDS.has(n[2].word.toLowerCase()) : VOCAB_CATS.has(n[2].cat)); return { covered: ok.length, total: A1_NOTIONS.length }; }, []);
+  const stats = useMemo(() => { const now = Date.now(); let learned = 0, due = 0; SENTENCES.forEach((c) => { const s = cardState(c.id); if (s.reps >= 1) learned++; if (s.reps >= 1 && s.due <= now) due++; }); return { learned, due, seen: Object.keys(store.vocab||{}).length }; }, [store]);
+
+  function startStudy(m, uf) {
+    const now = Date.now(); const pool = SENTENCES.filter((c) => (uf == null ? true : c.u === uf));
+    const dueIds = pool.filter((c) => { const s = cardState(c.id); return s.reps >= 1 && s.due <= now; }).map((c) => c.id);
+    const newIds = pool.filter((c) => cardState(c.id).reps === 0).map((c) => c.id).slice(0, 10);
+    let q = dueIds.concat(newIds);
+    if (!q.length) q = pool.map((c) => c.id).sort((a, b) => cardState(a).due - cardState(b).due).slice(0, 10);
+    setMode(m); setQueue(q); setPos(0); setRevealed(false); setHeard(false); setSelWord(null); setSDone(0); setView("study");
+  }
+  const done = pos >= queue.length;
+  const card = view === "study" && !done ? SENTENCES[queue[pos]] : null;
+  const sentence = useMemo(() => (card ? card.words.map((x) => x.t).join(" ") : ""), [card]);
+  useEffect(() => { if (mode === "listen" && card && !revealed && !heard) { const t = setTimeout(() => { speak(sentence); setHeard(true); }, 350); return () => clearTimeout(t); } }, [card, mode, revealed, heard, sentence]);
+
+  function onGrade(g) {
+    const id = queue[pos]; const now = Date.now(); const upd = grade(cardState(id), g, now);
+    const nc = Object.assign({}, store.cards); nc[id] = upd;
+    persist(Object.assign({}, store, { cards: nc, streak: bumpStreak(store) }));
+    setSDone((n) => n + 1);
+    if (g === "again") { const q = queue.slice(); q.splice(pos, 1); q.splice(Math.min(pos + 3, q.length), 0, id); setQueue(q); setPos(pos); }
+    else setPos(pos + 1);
+    setRevealed(false); setHeard(false); setSelWord(null);
+  }
+  function markVocab(sp){ const v=Object.assign({},store.vocab); v[sp]=1; persist(Object.assign({},store,{vocab:v})); }
+  function toggleVocab(sp){ const v=Object.assign({},store.vocab); if(v[sp])delete v[sp]; else v[sp]=1; persist(Object.assign({},store,{vocab:v})); }
+  async function signOut(){ try{ await sb.auth.signOut(); }catch(e){} setSession(null); setGate("auth"); }
+
+  if (gate === "auth") return <Auth onSkip={() => setGate("app")} />;
+
+  return (
+    <div style={{ fontFamily: T.sans, background: T.surface, color: T.ink, minHeight: "100vh", padding: "18px 14px 46px" }}>
+      <style>{`@media (prefers-reduced-motion: reduce){.flip{transition:none!important}} .flip{transition:opacity .28s} .tap:active{transform:scale(.98)} .wchip{cursor:pointer;border-bottom:2px dotted transparent} .wchip:hover{border-bottom-color:currentColor} .row:hover{background:#faf9fd} input{font-family:inherit}`}</style>
+      <div style={{ maxWidth: 440, margin: "0 auto" }}>
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 10 }}>
+          <div style={{ fontFamily: T.serif, fontSize: 26, cursor: "pointer" }} onClick={() => setView("home")}>hablas<span style={{ color: T.jade }}>·</span></div>
+          <div style={{ fontSize: 12, color: T.inkSoft, textAlign: "right" }}>
+            <div>Level A1 · Latin American</div>
+            {CLOUD && session && <div style={{ fontSize: 11, marginTop: 2 }}>{syncMsg || session.user.email} · <span onClick={signOut} style={{ color: T.violet, cursor: "pointer" }}>sign out</span></div>}
+            {CLOUD && !session && <div style={{ fontSize: 11, marginTop: 2 }}><span onClick={() => setGate("auth")} style={{ color: T.violet, cursor: "pointer" }}>sign in to sync</span></div>}
+          </div>
+        </div>
+        {view === "home" && <Home stats={stats} covG={covG} covV={covV} store={store} cardState={cardState} onStudy={startStudy} onQuiz={() => setView("quiz")} onVocab={() => setView("vocab")} />}
+        {view === "study" && card && <StudyCard mode={mode} card={card} sentence={sentence} revealed={revealed} selWord={selWord} unit={UNITS.find((u) => u.n === card.u)} pos={pos} total={queue.length} sDone={sDone} onBack={() => setView("home")} onReveal={() => { setRevealed(true); speak(sentence); }} onReplay={() => speak(sentence)} onWord={setSelWord} onCloseWord={() => setSelWord(null)} onGrade={onGrade} cardState={cardState} />}
+        {view === "study" && done && <Complete sDone={sDone} mode={mode} onHome={() => setView("home")} />}
+        {view === "quiz" && <Quiz onBack={() => setView("home")} onSeen={markVocab} />}
+        {view === "vocab" && <VocabBrowser store={store} onToggle={toggleVocab} onBack={() => setView("home")} />}
+      </div>
+    </div>
+  );
+}
+
+function Auth(props) {
+  const { onSkip } = props;
+  const [email, setEmail] = useState(""); const [pw, setPw] = useState("");
+  const [mode, setMode] = useState("signin"); const [msg, setMsg] = useState(""); const [busy, setBusy] = useState(false);
+  async function go() {
+    setBusy(true); setMsg("");
+    try {
+      if (mode === "signup") { const { error } = await sb.auth.signUp({ email, password: pw }); if (error) setMsg(error.message); else setMsg("Check your email to confirm, then sign in."); }
+      else { const { error } = await sb.auth.signInWithPassword({ email, password: pw }); if (error) setMsg(error.message); }
+    } catch (e) { setMsg("Something went wrong."); }
+    setBusy(false);
+  }
+  return (
+    <div style={{ fontFamily: T.sans, background: T.surface, color: T.ink, minHeight: "100vh", padding: "40px 18px" }}>
+      <div style={{ maxWidth: 360, margin: "0 auto" }}>
+        <div style={{ fontFamily: T.serif, fontSize: 30, textAlign: "center" }}>hablas<span style={{ color: T.jade }}>·</span></div>
+        <div style={{ fontSize: 13, color: T.inkSoft, textAlign: "center", margin: "6px 0 22px" }}>{mode === "signup" ? "Create an account to sync across devices" : "Sign in to sync your progress"}</div>
+        <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email" type="email" style={inp} />
+        <input value={pw} onChange={(e) => setPw(e.target.value)} placeholder="password" type="password" style={inp} />
+        <button className="tap" onClick={go} disabled={busy} style={{ width: "100%", background: T.jade, color: "#fff", border: "none", borderRadius: 10, padding: "13px", fontSize: 15, fontWeight: 700, cursor: "pointer", marginTop: 6 }}>{busy ? "…" : mode === "signup" ? "Create account" : "Sign in"}</button>
+        {msg && <div style={{ fontSize: 13, color: T.rose, marginTop: 10, textAlign: "center" }}>{msg}</div>}
+        <div style={{ textAlign: "center", marginTop: 16, fontSize: 13 }}>
+          <span onClick={() => setMode(mode === "signup" ? "signin" : "signup")} style={{ color: T.violet, cursor: "pointer" }}>{mode === "signup" ? "Have an account? Sign in" : "New here? Create an account"}</span>
+        </div>
+        <div style={{ textAlign: "center", marginTop: 22 }}>
+          <span onClick={onSkip} style={{ color: T.inkSoft, cursor: "pointer", fontSize: 13, borderBottom: `1px dotted ${T.inkSoft}` }}>Continue without an account</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+const inp = { width: "100%", padding: "12px 14px", borderRadius: 10, border: `1px solid ${T.line}`, fontSize: 15, marginBottom: 10, fontFamily: T.sans };
+
+function Home(props) {
+  const { stats, covG, covV, store, cardState, onStudy, onQuiz, onVocab } = props;
+  const [showSounds, setShowSounds] = useState(false);
+  const gC = covG.covered === covG.total, vC = covV.covered === covV.total;
+  const unitProg = UNITS.map((u) => { const cs = SENTENCES.filter((c) => c.u === u.n); return Object.assign({}, u, { learned: cs.filter((c) => cardState(c.id).reps >= 1).length, total: cs.length }); });
+  const streak = (store.streak && store.streak.count) || 0;
+  return (
+    <div>
+      <div style={{ background: T.violetSoft, border: `1px solid ${T.violet}`, borderRadius: 12, padding: "13px 15px", marginBottom: 14 }}>
+        <div style={{ fontSize: 13.5, fontWeight: 700, color: gC ? T.jade : T.violet }}>A1 grammar — {covG.covered}/{covG.total} {gC ? "✓ complete" : ""}</div>
+        <div style={{ fontSize: 13.5, fontWeight: 700, color: vC ? T.jade : T.violet, marginTop: 4 }}>A1 vocabulary notions — {covV.covered}/{covV.total} {vC ? "✓ complete" : ""} · {VOCAB.length} words</div>
+        <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 6, lineHeight: 1.45 }}>{(gC && vC) ? "Every A1 grammar point and every A1 vocabulary area has content here. Review it all to retention and you'll know what an A1 speaker knows — nothing below the level." : "Some areas still need content."}</div>
+      </div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        <Metric v={stats.learned + "/" + SENTENCES.length} l="sentences learned" c={T.jade} />
+        <Metric v={stats.due} l="due now" c={T.amber} />
+        <Metric v={streak} l="day streak" c={T.violet} />
+      </div>
+      <Big bg={T.jade} title="Speak ▸" sub="see meaning, say the Spanish, then check" onClick={() => onStudy("practice", null)} />
+      <Big bg={T.violet} title="Listen ▸" sub="audio plays first — the TV-comprehension muscle" onClick={() => onStudy("listen", null)} />
+      <Big bg={T.amber} title="Quiz ▸" sub="quick recognition test — a different way to recall" onClick={onQuiz} />
+      <div style={{ fontSize: 12, color: T.inkSoft, margin: "20px 0 10px", textTransform: "uppercase", letterSpacing: .5 }}>Units — in sequence</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+        {unitProg.map((u) => { const pct = u.total ? u.learned / u.total : 0; return (
+          <button key={u.n} className="tap" onClick={() => onStudy("practice", u.n)} style={{ textAlign: "left", background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: "13px 15px", cursor: "pointer", fontFamily: T.sans }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}><div style={{ fontSize: 14.5, fontWeight: 700 }}><span style={{ color: T.violet }}>{u.n}.</span> {u.name}</div><div style={{ fontSize: 12, color: T.inkSoft }}>{u.learned}/{u.total}</div></div>
+            <div style={{ fontSize: 12, color: T.inkSoft, margin: "3px 0 8px" }}>{u.hint}</div>
+            <div style={{ height: 5, background: T.line, borderRadius: 99, overflow: "hidden" }}><div style={{ width: (pct * 100) + "%", height: "100%", background: pct === 1 ? T.jade : T.amber }} /></div>
+          </button>); })}
+      </div>
+      <div style={{ marginTop: 16 }}><Big bg={T.ink} title="Vocabulary — the A1 spine ▸" sub={stats.seen + "/" + VOCAB.length + " marked · browse & hear every word"} onClick={onVocab} /></div>
+      <button className="tap" onClick={() => setShowSounds(!showSounds)} style={{ width: "100%", textAlign: "left", background: "none", border: "none", color: T.inkSoft, fontSize: 12.5, padding: "14px 2px 2px", cursor: "pointer" }}>Sounds & pronunciation {showSounds ? "▾" : "▸"}</button>
+      {showSounds && <div style={{ fontSize: 12.5, color: T.inkSoft, lineHeight: 1.55, background: T.card, border: `1px solid ${T.line}`, borderRadius: 10, padding: "12px 14px" }}>No alphabet drills — you pick up sound by hearing and repeating whole words, and your ear catches up. Two habits carry most of the payoff: keep the five vowels pure and short (a-e-i-o-u never glide like in English), and put the stress where the word wants it (hablo "I speak" vs habló "he spoke"). Tap any word anywhere to hear it and copy it aloud.</div>}
+      <div style={{ marginTop: 14, fontSize: 11.5, color: T.inkSoft, lineHeight: 1.5 }}>{CLOUD ? "Signed in, progress syncs across your devices; offline changes save locally and sync next time." : "Progress is saved on this device. Add a Supabase project (see the setup notes) to turn on accounts and cross-device sync."} Audio is browser text-to-speech.</div>
+    </div>
+  );
+}
+
+function StudyCard(props) {
+  const { mode, card, sentence, revealed, selWord, unit, pos, total, sDone, onBack, onReveal, onReplay, onWord, onCloseWord, onGrade, cardState } = props;
+  const progress = total ? pos / total : 0;
+  return (
+    <div>
+      <button onClick={onBack} className="tap" style={{ background: "none", border: "none", color: T.inkSoft, cursor: "pointer", fontSize: 13, padding: "4px 0" }}>← home</button>
+      <div style={{ fontSize: 12, color: mode === "listen" ? T.violet : T.jade, fontWeight: 600, marginBottom: 8 }}>{mode === "listen" ? "Listening" : "Speaking"} · Unit {unit.n} — {unit.name}</div>
+      <div style={{ height: 6, background: T.line, borderRadius: 99, overflow: "hidden", marginBottom: 8 }}><div style={{ width: (progress * 100) + "%", height: "100%", background: T.jade, transition: "width .3s" }} /></div>
+      <div style={{ fontSize: 11.5, color: T.inkSoft, marginBottom: 14 }}>{pos} / {total} done · {sDone} reviewed</div>
+      <div style={{ background: T.card, border: `1px solid ${T.line}`, borderLeft: `4px solid ${mode === "listen" ? T.violet : T.jade}`, borderRadius: 14, padding: 20, boxShadow: "0 1px 0 rgba(33,27,51,.04)" }}>
+        <div style={{ fontSize: 11, color: T.inkSoft, marginBottom: 12, display: "flex", justifyContent: "space-between" }}><span style={{ background: T.violetSoft, color: T.violet, borderRadius: 99, padding: "2px 9px" }}>{card.tag}</span><span>{revealed ? "check yourself" : mode === "listen" ? "what did you hear?" : "produce it"}</span></div>
+        {mode === "listen" && !revealed ? (
+          <div style={{ textAlign: "center", padding: "10px 0 4px" }}>
+            <button className="tap" onClick={onReplay} style={{ width: 84, height: 84, borderRadius: 99, border: `2px solid ${T.violet}`, background: T.violetSoft, color: T.violet, fontSize: 34, cursor: "pointer" }}>▶</button>
+            <div style={{ fontSize: 14, color: T.inkSoft, marginTop: 14, lineHeight: 1.5 }}>Listen. Catch what you can, then reveal. Tap to replay.</div>
+          </div>
+        ) : (<div style={{ fontFamily: T.serif, fontSize: 23, lineHeight: 1.35 }}>{card.en}</div>)}
+        {!revealed ? (
+          <div>
+            {mode === "practice" && <div style={{ marginTop: 16, fontSize: 14, color: T.inkSoft, background: T.violetSoft, borderRadius: 10, padding: "10px 12px" }}>Say the Spanish out loud from memory, then reveal to check.</div>}
+            <button className="tap" onClick={onReveal} style={btn(T.ink, "#fff", true)}>{mode === "listen" ? "Reveal the text" : "Reveal & hear it"}</button>
+          </div>
+        ) : (
+          <div className="flip">
+            <div style={{ marginTop: 16, fontFamily: T.serif, fontSize: 25, lineHeight: 1.5 }}>{card.words.map((w, i) => (<span key={i}><span className="wchip" onClick={() => onWord(w)} style={{ color: w.p === "verb" ? T.jade : T.ink, fontWeight: w.p === "verb" ? 600 : 400 }}>{w.t}</span>{" "}</span>))}</div>
+            {mode === "listen" && <div style={{ marginTop: 8, fontFamily: T.serif, fontSize: 16, color: T.inkSoft }}>{card.en}</div>}
+            <div style={{ marginTop: 6, fontSize: 13, color: T.inkSoft }}>Tap any word · <span style={{ color: T.jade }}>green = verb</span></div>
+            <button className="tap" onClick={onReplay} style={btn(T.jadeSoft, T.jade)}>▶ Hear it again</button>
+            <div style={{ marginTop: 18, fontSize: 12, color: T.inkSoft, marginBottom: 8 }}>How did that go?</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <Gr label="Again" sub={dueLabel(0)} c={T.rose} onClick={() => onGrade("again")} />
+              <Gr label="Hard" sub={dueLabel(grade(cardState(card.id), "hard", Date.now()).interval)} c={T.amber} onClick={() => onGrade("hard")} />
+              <Gr label="Good" sub={dueLabel(grade(cardState(card.id), "good", Date.now()).interval)} c={T.violet} onClick={() => onGrade("good")} />
+              <Gr label="Easy" sub={dueLabel(grade(cardState(card.id), "easy", Date.now()).interval)} c={T.jade} onClick={() => onGrade("easy")} />
+            </div>
+          </div>
+        )}
+      </div>
+      {selWord && <Breakdown word={selWord} onClose={onCloseWord} />}
+    </div>
+  );
+}
+
+function Quiz(props) {
+  const { onBack, onSeen } = props;
+  const qs = useMemo(() => { const picks = shuffle(VOCAB).slice(0, 10); return picks.map((v) => { const wrong = shuffle(VOCAB.filter((x) => x.sp !== v.sp)).slice(0, 3).map((x) => x.sp); return { en: v.en, sp: v.sp, options: shuffle([v.sp].concat(wrong)) }; }); }, []);
+  const [i, setI] = useState(0); const [pick, setPick] = useState(null); const [score, setScore] = useState(0);
+  const q = qs[i]; const finished = i >= qs.length;
+  function choose(o) { if (pick) return; setPick(o); speak(q.sp); onSeen(q.sp); if (o === q.sp) setScore((s) => s + 1); }
+  if (finished) return (
+    <div style={{ background: "#fff", border: `1px solid ${T.line}`, borderRadius: 14, padding: "26px 22px", textAlign: "center", marginTop: 16 }}>
+      <div style={{ fontFamily: T.serif, fontSize: 24, marginBottom: 8 }}>{score}/{qs.length} correct</div>
+      <div style={{ fontSize: 14, color: T.inkSoft }}>Recognition testing hits a different memory path than producing or hearing — using all three is what makes it stick.</div>
+      <button className="tap" onClick={onBack} style={btn(T.ink, "#fff", true)}>Back to home</button>
+    </div>
+  );
+  return (
+    <div>
+      <button onClick={onBack} className="tap" style={{ background: "none", border: "none", color: T.inkSoft, cursor: "pointer", fontSize: 13, padding: "4px 0" }}>← home</button>
+      <div style={{ fontSize: 12, color: T.amber, fontWeight: 600, margin: "4px 0 12px" }}>Quiz · {i + 1} / {qs.length}</div>
+      <div style={{ background: T.card, border: `1px solid ${T.line}`, borderLeft: `4px solid ${T.amber}`, borderRadius: 14, padding: 20 }}>
+        <div style={{ fontSize: 13, color: T.inkSoft, marginBottom: 6 }}>Which word means…</div>
+        <div style={{ fontFamily: T.serif, fontSize: 24, marginBottom: 16 }}>{q.en}</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+          {q.options.map((o) => { let bg = "#fff", bd = T.line, col = T.ink; if (pick) { if (o === q.sp) { bg = T.jadeSoft; bd = T.jade; col = T.jade; } else if (o === pick) { bg = "#F7E7EA"; bd = T.rose; col = T.rose; } } return <button key={o} className="tap" onClick={() => choose(o)} style={{ textAlign: "left", background: bg, border: `1.5px solid ${bd}`, color: col, borderRadius: 10, padding: "12px 14px", fontSize: 17, fontFamily: T.serif, cursor: pick ? "default" : "pointer" }}>{o}</button>; })}
+        </div>
+        {pick && <button className="tap" onClick={() => { setPick(null); setI(i + 1); }} style={btn(T.ink, "#fff", true)}>{i + 1 >= qs.length ? "See score" : "Next →"}</button>}
+      </div>
+    </div>
+  );
+}
+
+function VocabBrowser(props) {
+  const { store, onToggle, onBack } = props;
+  const [q, setQ] = useState("");
+  const cats = useMemo(() => { const m = {}; VOCAB.forEach((v) => { if (q && !(v.sp.toLowerCase().indexOf(q.toLowerCase()) >= 0 || v.en.toLowerCase().indexOf(q.toLowerCase()) >= 0)) return; (m[v.cat] = m[v.cat] || []).push(v); }); return m; }, [q]);
+  const seen = Object.keys(store.vocab || {}).length;
+  return (
+    <div>
+      <button onClick={onBack} className="tap" style={{ background: "none", border: "none", color: T.inkSoft, cursor: "pointer", fontSize: 13, padding: "4px 0" }}>← home</button>
+      <div style={{ fontSize: 13, color: T.inkSoft, margin: "4px 0 10px" }}>The A1 spine · {seen}/{VOCAB.length} marked · tap a word to hear it, tap the dot to mark it known</div>
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="search Spanish or English…" style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `1px solid ${T.line}`, fontSize: 14, marginBottom: 14 }} />
+      {Object.keys(cats).map((cat) => (
+        <div key={cat} style={{ marginBottom: 18 }}>
+          <div style={{ fontSize: 12, color: T.violet, fontWeight: 700, marginBottom: 6, textTransform: "uppercase", letterSpacing: .4 }}>{cat} · {cats[cat].length}</div>
+          <div style={{ background: T.card, border: `1px solid ${T.line}`, borderRadius: 10, overflow: "hidden" }}>
+            {cats[cat].map((v, i) => { const on = !!(store.vocab || {})[v.sp]; return (
+              <div key={v.sp + i} className="row" style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: i % 2 ? "#fff" : T.surface, fontSize: 14 }}>
+                <button onClick={() => onToggle(v.sp)} style={{ width: 18, height: 18, borderRadius: 99, border: `2px solid ${on ? T.jade : T.line}`, background: on ? T.jade : "#fff", cursor: "pointer", flexShrink: 0 }} />
+                <span onClick={() => speak(v.sp)} style={{ fontFamily: T.serif, fontSize: 16, cursor: "pointer" }}>{v.sp}</span>
+                <span style={{ color: T.inkSoft, fontSize: 13, marginLeft: "auto", textAlign: "right" }}>{v.en}</span>
+              </div>); })}
+          </div>
+        </div>
+      ))}
+      {!Object.keys(cats).length && <div style={{ color: T.inkSoft, fontSize: 14 }}>No matches.</div>}
+    </div>
+  );
+}
+
+function Breakdown(props) {
+  const { word, onClose } = props;
+  const [showConj, setShowConj] = useState(false);
+  const clean = word.t.replace(/[¿?.,—!¡]/g, "").replace(/^—/, "");
+  const isVerb = word.p === "verb" && word.verb && CONJ[word.verb.key];
+  const c = isVerb ? CONJ[word.verb.key] : null;
+  return (
+    <div style={{ marginTop: 14, background: "#fff", border: `1px solid ${T.line}`, borderRadius: 14, padding: "16px 18px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div><div style={{ fontFamily: T.serif, fontSize: 23 }}>{clean}</div><div style={{ fontSize: 14, color: T.inkSoft, marginTop: 2 }}>{word.g}</div></div>
+        <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, color: T.inkSoft, cursor: "pointer" }}>×</button>
+      </div>
+      {isVerb && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}><Tag>{c.eng}</Tag><Tag>{word.verb.tense}</Tag>{word.verb.person !== "—" && <Tag>{word.verb.person}</Tag>}</div>
+          <button className="tap" onClick={() => setShowConj(!showConj)} style={{ marginTop: 12, background: "none", border: `1px solid ${T.line}`, borderRadius: 8, padding: "7px 11px", fontSize: 12.5, color: T.violet, cursor: "pointer", fontFamily: T.sans }}>{showConj ? "Hide" : "Show"} grammar — conjugate {word.verb.key} ▾</button>
+          {showConj && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 8 }}><b style={{ color: T.jade }}>{c.pat}</b> · present tense (tap to hear):</div>
+              <div style={{ border: `1px solid ${T.line}`, borderRadius: 10, overflow: "hidden" }}>
+                {c.forms.map((row, i) => { const p = row[0], f = row[1]; const match = f.split(" ").pop() === clean.split(" ").pop(); return (
+                  <div key={i} className="row" style={{ display: "flex", justifyContent: "space-between", padding: "7px 12px", background: i % 2 ? "#fff" : T.surface, fontSize: 14, cursor: "pointer" }} onClick={() => speak(f)}>
+                    <span style={{ color: T.inkSoft }}>{p}</span><span style={{ fontFamily: T.serif, color: match ? T.jade : T.ink, fontWeight: match ? 700 : 400 }}>{f} ▸</span>
+                  </div>); })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      {!isVerb && word.l && word.l !== clean.toLowerCase() && <div style={{ marginTop: 10, fontSize: 13, color: T.inkSoft }}>dictionary form <b style={{ color: T.ink }}>{word.l}</b></div>}
+    </div>
+  );
+}
+
+function Complete(props) {
+  const { sDone, mode, onHome } = props;
+  return (<div style={{ background: "#fff", border: `1px solid ${T.line}`, borderRadius: 14, padding: "26px 22px", textAlign: "center", marginTop: 16 }}>
+    <div style={{ fontFamily: T.serif, fontSize: 24, marginBottom: 8 }}>¡Muy bien!</div>
+    <div style={{ fontSize: 14, color: T.inkSoft, lineHeight: 1.5 }}>You worked through <b style={{ color: mode === "listen" ? T.violet : T.jade }}>{sDone}</b> cards. Your schedule is saved{CLOUD ? " and synced" : ""} — shaky ones return sooner, solid ones days out.</div>
+    <button className="tap" onClick={onHome} style={btn(T.ink, "#fff", true)}>Back to home</button>
+  </div>);
+}
+
+function Metric(props){ return <div style={{ flex: 1, background: "#fff", border: `1px solid ${T.line}`, borderRadius: 10, padding: "9px 10px" }}><div style={{ fontSize: 19, fontWeight: 700, color: props.c }}>{props.v}</div><div style={{ fontSize: 10.5, color: T.inkSoft, lineHeight: 1.2 }}>{props.l}</div></div>; }
+function Tag(props){ return <span style={{ fontSize: 11.5, background: props.alt ? T.jadeSoft : T.violetSoft, color: props.alt ? T.jade : T.violet, borderRadius: 99, padding: "3px 9px" }}>{props.children}</span>; }
+function Gr(props){ return <button className="tap" onClick={props.onClick} style={{ background: "#fff", border: `1.5px solid ${props.c}`, color: props.c, borderRadius: 10, padding: "10px 8px", cursor: "pointer", fontFamily: T.sans }}><div style={{ fontSize: 15, fontWeight: 700 }}>{props.label}</div><div style={{ fontSize: 10.5, opacity: .85 }}>{props.sub}</div></button>; }
+function Big(props){ return <button className="tap" onClick={props.onClick} style={{ width: "100%", textAlign: "left", background: props.bg, color: "#fff", border: "none", borderRadius: 12, padding: "15px 18px", cursor: "pointer", fontFamily: T.sans, marginBottom: 10 }}><div style={{ fontSize: 16, fontWeight: 700 }}>{props.title}</div><div style={{ fontSize: 12, opacity: .9, marginTop: 2 }}>{props.sub}</div></button>; }
+function btn(bg, fg, block){ return { marginTop: 16, width: block ? "100%" : "auto", background: bg, color: fg, border: "none", borderRadius: 10, padding: "13px 16px", fontSize: 15, fontWeight: 600, cursor: "pointer", fontFamily: T.sans }; }
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
